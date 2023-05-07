@@ -1,0 +1,134 @@
+import io
+import requests as requests
+import xlsxwriter
+from selenium import webdriver
+from selenium.webdriver import ActionChains, Keys
+from selenium.webdriver.common.by import By
+from selenium.webdriver.chrome.service import Service
+import time
+from lxml.html import etree
+
+'''
+    此代码不可以直接运行成功， 主要展示可以使用selenium技术进行web自动化测试
+    selenium需要调用一个浏览器驱动，需要自行对应版本下载
+    本代码展示的是一个低级的爬虫爬取淘宝网页数据并生成excel表格的例子
+'''
+
+
+class SpiderTaobao:
+    def __init__(self):
+        pass
+
+    def webdriver_clear(self):
+        option = webdriver.ChromeOptions()
+        option.add_experimental_option('excludeSwitches', ['enable-automation'])
+        option.add_argument('--disable-blink-features=AutomationControlled')
+        s = Service(r'C:\Users\Administrator\Desktop\chromedriver.exe')
+        driver = webdriver.Chrome(service=s, options=option)
+        # 设置全屏
+        driver.maximize_window()
+        return driver
+
+    def get_url(self, driver):
+        url = 'https://login.taobao.com/member/login.jhtml?spm=a21bo.2017.754894437.1.607811d9UWXkLt&f=top&redirect' \
+              'URL=https%3A%2F%2Fwww.taobao.com%2F%3Fspm%3Da1z02.1.1581860521.1.Ocw83k'
+        driver.get(url)
+        driver.implicitly_wait(10)
+        num = '输入淘宝账号'
+        for index in num:
+            driver.find_element(By.XPATH, '//input[@placeholder="账号名/邮箱/手机号"]').send_keys(f'{index}')
+        ps = '输入淘宝密码'
+        for indexs in ps:
+            driver.find_element(By.XPATH, '//input[@placeholder="请输入登录密码"]').send_keys(f'{indexs}')
+        # 淘宝有扫码等待扫码
+        time.sleep(30)
+        cook = driver.get_cookies()
+        # 登录
+        url = 'https://www.taobao.com/?spm=a1z02.1.1581860521.1.Ocw83k'
+        driver.add_cookie(cook[0])
+        driver.get(url)
+        return driver
+
+    def login_search_deal(self, driver, name):
+        # 搜索女装商品
+        time.sleep(2)
+        driver.find_element(By.ID, 'q').send_keys((Keys.CONTROL, "a"))
+        driver.find_element(By.ID, 'q').send_keys(name)
+        time.sleep(1)
+        driver.find_element(By.XPATH, '//button[@class="btn-search tb-bg" or @class="submit icon-btn-search"]').click()
+        time.sleep(3)
+        driver.find_element(By.XPATH, '//*[@id="J_relative"]/div[1]/div/ul/li[2]/a').click()
+        time.sleep(2)
+        for num in range(1, 5):
+            driver.execute_script("window.scrollBy(0, 1000)")
+            time.sleep(1)
+        js = "window.scrollTo(0, document.body.scrollHeight)"
+        driver.execute_script(js)
+        time.sleep(5)
+        text = driver.execute_script("return document.documentElement.outerHTML")
+        driver.execute_script("document.documentElement.scrollTop=0")
+        # 生产html文本
+        parse_test = etree.HTML(text)
+        html = parse_test.xpath('//div[@class="grid g-clearfix"]/div[@class="items"][1]/div')
+
+        # 处理文本
+        j = 0
+        All_item = list()
+        for index2 in html:
+            item = list()
+            a = index2.xpath('.//div[@class="row row-2 title"]/a/@data-nid')[0]
+            item.append("".join(index2.xpath(f'.//img[@id="J_Itemlist_Pic_{a}"]/@src')))
+            item.append("".join(index2.xpath('.//div[@class="deal-cnt"]/text()')))
+            item.append(''.join(
+                index2.xpath('.//div[@class="pic-box J_MouseEneterLeave J_PicBox"]//div[@class="pic"]/a/img/@alt')))
+            url = ''.join(index2.xpath('.//div[@class="row row-2 title"]/a/@href'))
+            if 'http:' not in url:
+                url = 'https://' + url
+            item.append(url)
+            item.append(''.join(index2.xpath('.//div[@class="row row-2 title"]/a/@trace-price')))
+            All_item.append(item)
+        time.sleep(1)
+        return All_item
+
+    def dealdata(self, workbook, All_item, name):
+        worksheet = workbook.add_worksheet(name)  # 建立sheet
+        rowTitle = ['图片', '销量', '名称', '链接', '价格']
+        worksheet.set_column('A:A', 17)
+        worksheet.set_column('B:B', 15)
+        worksheet.set_column('C:C', 20)
+        worksheet.set_column('D:D', 36)
+        worksheet.write_row('A1', rowTitle)  # 从A1单元格开始填充rowTitle的数据
+        for i in range(0, len(rowTitle)):
+            worksheet.write(0, i, rowTitle[i])
+
+        for i in range(len(All_item)):
+            worksheet.set_row(i + 1, 95)
+            for x, y in enumerate(All_item[i]):
+                if x == 0:
+                    if "379092709" not in y[:-6]:
+                        image_data = self.request_deal(y[:-6])
+                        worksheet.insert_image(i + 1, x, x, {'image_data': image_data, 'x_scale': 0.5, 'y_scale': 0.5})
+                worksheet.write(i + 1, x, y)
+
+    def request_deal(self, urls):
+        a = io.BytesIO(requests.get(urls).content)
+        print(a)
+        print(requests.get(urls).content)
+        image_data = io.BytesIO(requests.get(urls).content)
+        return image_data
+
+
+def run():
+    tb = SpiderTaobao()
+    list1 = ['女装', "女装上衣", "女装裤子", "裤子", "短上衣", "短裤"]
+    driver = tb.webdriver_clear()
+    driver2 = tb.get_url(driver)
+    for i in enumerate(list1):
+        workbook = xlsxwriter.Workbook(f'./{i}.xlsx')
+        All_item = tb.login_search_deal(driver2, i)
+        tb.dealdata(workbook, All_item, i)
+        workbook.close()
+
+
+if __name__ == '__main__':
+    run()
